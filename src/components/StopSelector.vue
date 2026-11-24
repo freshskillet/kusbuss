@@ -119,7 +119,7 @@ function findNearestStop() {
       <span>{{ searchQuery ? 'OTSINGUTULEMUSED' : 'SAGEDASED PEATUSED' }}</span>
       <span>{{ filteredStops.length }} / {{ stops.length }}</span>
     </div>
-    <div v-if="filteredStops.length" class="stop-list">
+    <div v-if="filteredStops.length" class="stop-list" role="region" aria-label="Peatuste loend" tabindex="0">
       <div
         v-for="stop in filteredStops"
         :key="stop.id"
@@ -168,31 +168,32 @@ function findNearestStop() {
 </template>
 
 <style scoped>
-.selector-card { padding: 19px; border: 1px solid #2a302c; border-radius: 16px; background: #171b18; }
+.selector-card { padding: 20px; border: 1px solid #526453; border-radius: 26px; background: #1b251e; box-shadow: 0 16px 38px #0004; }
 .search-label, .stop-list-heading { display: flex; align-items: center; justify-content: space-between; color: #a2aaa3; font-size: 11px; font-weight: 700; letter-spacing: .6px; }
-.search-field { display: flex; height: 44px; align-items: center; gap: 10px; margin-top: 10px; padding: 0 11px; border: 1px solid #343b36; border-radius: 10px; background: #111512; }
+.search-field { display: flex; height: 50px; align-items: center; gap: 10px; margin-top: 10px; padding: 0 15px; border: 1px solid #637465; border-radius: 999px; background: #37463a; }
+.search-field:focus-within { border-color: #d7f6a8; }
 .search-field svg { width: 17px; flex: 0 0 17px; stroke: #8c958e; stroke-width: 1.7; stroke-linecap: round; }
-.search-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: #f5f7f5; background: transparent; font-size: 14px; }
+.search-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: #f5f7f5; background: transparent; font-size: 16px; }
 .search-field input::placeholder { color: #777f79; }
 .search-field kbd { display: grid; width: 19px; height: 20px; flex: 0 0 19px; place-items: center; border: 1px solid #343b36; border-radius: 5px; color: #808981; font-size: 11px; }
-.nearest-button { display: flex; width: 100%; height: 44px; align-items: center; gap: 8px; margin-top: 9px; padding: 0 10px; border: 1px solid #374b2e; border-radius: 9px; color: #c8f49f; background: #202a1c; cursor: pointer; font-size: 14px; text-align: left; }
+.nearest-button { display: flex; width: 100%; height: 46px; align-items: center; gap: 8px; margin-top: 10px; padding: 0 14px; border: 1px solid #62765c; border-radius: 999px; color: #d7f6a8; background: #293a2b; cursor: pointer; font-size: 14px; text-align: left; }
 .nearest-button:disabled { opacity: .7; cursor: wait; }
 .nearest-button svg { width: 15px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .nearest-button span { margin-left: auto; font-size: 15px; }
 .location-message { margin: 8px 0 0; color: #a6ca87; font-size: 12px; line-height: 1.4; }
 .stop-list-heading { margin: 25px 2px 9px; }
 .stop-list-heading span:last-child { color: #929a94; font-weight: 400; letter-spacing: 0; }
-.stop-list { display: flex; flex-direction: column; gap: 4px; }
-.stop-option { display: flex; width: 100%; min-height: 55px; align-items: center; gap: 4px; padding: 3px 4px 3px 7px; border: 1px solid transparent; border-radius: 10px; transition: background .16s ease, border-color .16s ease; }
+.stop-list { display: flex; max-height: min(28vh, 220px); overflow-y: auto; flex-direction: column; gap: 4px; overscroll-behavior: contain; }
+.stop-option { display: flex; width: 100%; min-height: 58px; align-items: center; gap: 4px; padding: 5px; border: 1px solid transparent; border-radius: 17px; transition: background .16s ease, border-color .16s ease; }
 .stop-option:hover { background: #1d221e; }
-.stop-option.selected { border-color: #394a31; background: #20271e; }
+.stop-option.selected { border-color: #64765d; background: #304030; }
 .stop-select { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
 .stop-select:focus-visible, .favorite-button:focus-visible { outline: 2px solid #b7f36b; outline-offset: 2px; }
-.stop-icon { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 9px; color: #8e9b90; background: #242a25; }
+.stop-icon { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 50%; color: #d9e3d6; background: #405044; }
 .selected .stop-icon { color: #c5f58f; background: #303d29; }
 .stop-icon svg { width: 19px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.stop-name { flex: 1; color: #e2e7e2; font-size: 14px; font-weight: 600; }
-.stop-name small { display: block; margin-top: 3px; color: #929a94; font-size: 11px; font-weight: 400; }
+.stop-name { flex: 1; color: #e2e7e2; font-size: 15px; font-weight: 600; }
+.stop-name small { display: block; margin-top: 3px; color: #b2bdb2; font-size: 12px; font-weight: 400; }
 .selected-indicator { width: 6px; height: 6px; border-radius: 50%; background: #b7f36b; box-shadow: 0 0 8px #b7f36b70; }
 .stop-spacer { width: 6px; }
 .favorite-wrap { display: flex; width: 25px; height: 30px; flex: 0 0 25px; align-items: center; justify-content: center; }
@@ -204,11 +205,11 @@ function findNearestStop() {
 @media (max-width: 760px) {
   .selector-card { padding: 15px; }
   .stop-list-heading { margin-top: 19px; }
-  .stop-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .stop-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .stop-option { gap: 2px; min-height: 58px; padding: 4px; }
   .stop-select { gap: 7px; }
   .stop-icon { width: 31px; height: 31px; flex-basis: 31px; }
-  .stop-name { font-size: 13px; }
+  .stop-name { font-size: 15px; }
   .favorite-wrap { flex-basis: 24px; width: 24px; }
 }
 </style>

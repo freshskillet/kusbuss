@@ -1,4 +1,6 @@
 <script setup>
+import { countyRealtimeUrl } from '../utils/countyRealtime'
+
 defineProps({
   departures: { type: Array, required: true },
   isLoading: { type: Boolean, default: false },
@@ -45,6 +47,13 @@ function formatClock(date) {
                 ? 'graafikus'
                 : `${Math.abs(departure.estimatedDelayMinutes)} min ${departure.estimatedDelayMinutes > 0 ? 'hilineb' : 'varem'}` }}
             </span>
+            <a
+              v-if="departure.transportType === 'county'"
+              class="county-live-link"
+              :href="countyRealtimeUrl(departure.routeId)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >Vaata asukohta Peatus.ee-s</a>
           </span>
         </div>
         <div class="arrival-cell">
@@ -52,11 +61,10 @@ function formatClock(date) {
             {{ departure.minutes === 0 ? 'Kohe' : `${departure.minutes} min` }}
           </strong>
           <span class="arrival-distance">
-            {{ formatClock(departure.scheduledAt) }}
+            {{ formatClock(departure.scheduledAt) }} · graafik
             <template v-if="departure.isLive && departure.distance !== null">
               · {{ departure.distance < 1000 ? `${Math.round(departure.distance)} m` : `${(departure.distance / 1000).toFixed(1)} km` }}
             </template>
-            <template v-else> · graafik</template>
           </span>
         </div>
       </article>
@@ -69,26 +77,27 @@ function formatClock(date) {
 </template>
 
 <style scoped>
-.departure-board { overflow: hidden; border: 1px solid #2a302c; border-radius: 15px; background: #171b18; }
-.board-table-head { display: grid; grid-template-columns: 86px minmax(0, 1fr) 92px; gap: 12px; padding: 15px 19px; border-bottom: 1px solid #2a302c; color: #929a94; font-size: 10px; font-weight: 700; letter-spacing: .7px; }
+.departure-board { overflow: hidden; border: 1px solid #526453; border-radius: 26px; background: #1b251e; box-shadow: 0 16px 38px #0004; }
+.board-table-head { display: grid; grid-template-columns: 86px minmax(0, 1fr) 92px; gap: 12px; padding: 18px 20px; border-bottom: 1px solid #405044; color: #bdc9bc; font-size: 11px; font-weight: 700; letter-spacing: .7px; }
 .board-table-head span:last-child { text-align: right; }
-.departure-row { display: grid; min-height: 80px; grid-template-columns: 86px minmax(0, 1fr) 92px; align-items: center; gap: 12px; padding: 10px 19px; border-bottom: 1px solid #252b27; transition: background .15s ease; }
+.departure-row { display: grid; min-height: 88px; grid-template-columns: 86px minmax(0, 1fr) 92px; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid #354537; transition: background .15s ease; }
 .departure-row:last-child { border-bottom: 0; }
-.departure-row:hover { background: #1b201c; }
+.departure-row:hover { background: #29392c; }
 .route-cell { display: flex; align-items: center; gap: 8px; }
-.route-number { display: grid; min-width: 40px; height: 38px; place-items: center; padding: 0 5px; border-radius: 7px; color: #07251d; background: #00c99a; font-family: inherit; font-size: 17px; font-weight: 700; }
+.route-number { display: grid; min-width: 42px; height: 42px; place-items: center; padding: 0 6px; border-radius: 50%; color: #07251d; background: #00c99a; font-family: inherit; font-size: 17px; font-weight: 700; }
 .route-number.tram { color: #2a1008; background: #ff642e; }
 .route-number.trolley { color: #fff; background: #174d9b; }
 .route-number.county { color: #3b2109; background: #ffbf80; }
 .route-type { color: #a1a9a2; font-size: 11px; }
 .destination-cell { min-width: 0; }
 .destination-name { display: block; overflow: hidden; color: #edf0ed; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.destination-meta { display: block; margin-top: 6px; color: #9aa39b; font-size: 11px; letter-spacing: .2px; }
+.destination-meta { display: block; margin-top: 6px; color: #b2bdb2; font-size: 12px; letter-spacing: .2px; }
+.county-live-link { display: inline-block; margin-top: 5px; color: #d7f6a8; font-size: 12px; }
 .arrival-cell { display: flex; align-items: flex-end; flex-direction: column; }
-.arrival-cell strong { color: #d3f5b5; font-family: inherit; font-size: 18px; font-weight: 700; white-space: nowrap; }
+.arrival-cell strong { color: #d7f6a8; font-family: inherit; font-size: 20px; font-weight: 600; white-space: nowrap; }
 .arrival-cell strong.immediate { color: #b7f36b; }
 .arrival-distance { margin-top: 4px; color: #929a94; font-size: 11px; }
-.board-bottom { display: flex; justify-content: space-between; padding: 14px 19px; border-top: 1px solid #2a302c; color: #929a94; background: #151916; font-size: 12px; }
+.board-bottom { display: flex; justify-content: space-between; padding: 15px 20px; border-top: 1px solid #405044; color: #b2bdb2; background: #172019; font-size: 12px; }
 .realtime-key { display: inline-flex; align-items: center; }
 .board-message { display: flex; min-height: 128px; align-items: center; justify-content: center; color: #a2aaa3; font-size: 15px; }
 
@@ -97,7 +106,7 @@ function formatClock(date) {
   .board-table-head { padding-top: 13px; padding-bottom: 13px; font-size: 9px; letter-spacing: .4px; }
   .departure-row { min-height: 76px; }
   .route-cell { flex-direction: column; align-items: flex-start; gap: 3px; }
-  .route-number { min-width: 34px; height: 32px; font-size: 15px; }
+  .route-number { min-width: 36px; height: 36px; font-size: 15px; }
   .route-type { font-size: 10px; }
   .destination-name { font-size: 14px; }
   .destination-meta { font-size: 10px; }

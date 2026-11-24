@@ -104,20 +104,20 @@ function keydown(event) {
 <style scoped>
 .stop-search { position: relative; min-width: 0; }
 .stop-search:focus-within { z-index: 3; }
-.place-field { display: flex; min-width: 0; height: 48px; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid #737a74; border-radius: 7px; background: #111512; }
-.place-field:focus-within { border-color: #b7f36b; }
+.place-field { display: flex; min-width: 0; height: 52px; align-items: center; gap: 10px; padding: 0 15px; border: 1px solid #637465; border-radius: 999px; background: #37463a; }
+.place-field:focus-within { border-color: #d7f6a8; }
 .place-icon { width: 18px; flex: 0 0 18px; font-size: 15px; line-height: 1; text-align: center; }
-.origin { color: #a4e271; }
+.origin { color: #d7f6a8; }
 .destination { color: #fa7c9f; }
-.place-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: #f0f3f0; background: transparent; font-size: 15px; }
+.place-field input { width: 100%; min-width: 0; border: 0; outline: 0; color: #f0f3f0; background: transparent; font-size: 16px; }
+.place-field input::-webkit-search-cancel-button { filter: grayscale(1) brightness(1.5); cursor: pointer; }
 .place-field input::placeholder { color: #9da69e; }
-.suggestions { position: absolute; z-index: 4; top: 100%; right: 0; left: 0; max-height: 260px; overflow-y: auto; border: 1px solid #737a74; border-radius: 0 0 7px 7px; background: #171b18; box-shadow: 0 8px 18px #0008; }
+.suggestions { position: absolute; z-index: 4; top: calc(100% + 5px); right: 0; left: 0; max-height: 260px; overflow-y: auto; border: 1px solid #637465; border-radius: 18px; background: #1b251e; box-shadow: 0 12px 24px #0009; }
 .suggestions ul { margin: 0; padding: 0; list-style: none; }
-.suggestions li { padding: 10px 12px; color: #f0f3f0; cursor: pointer; font-size: 14px; }
-.suggestions li:hover, .suggestions li.active { background: #303d29; }
+.suggestions li { padding: 12px 15px; color: #f0f3f0; cursor: pointer; font-size: 15px; }
+.suggestions li:hover, .suggestions li.active { background: #3a4b39; }
 .suggestions p { margin: 0; padding: 12px; color: #aab3ab; font-size: 14px; }
 @media (max-width: 600px) {
-  .place-field { height: 45px; padding: 0 9px; }
-  .place-field input { font-size: 14px; }
+  .place-field { height: 50px; padding: 0 12px; }
 }
 </style>

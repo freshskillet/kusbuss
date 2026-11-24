@@ -8,7 +8,9 @@ const props = defineProps({
   vehicles: { type: Array, default: () => [] },
   trip: { type: Object, default: null },
   userLocation: { type: Object, default: null },
+  satellite: { type: Boolean, default: false },
 })
+const emit = defineEmits(['map-error'])
 
 const mapElement = ref(null)
 let map
@@ -21,11 +23,14 @@ let resizeFrame
 const vehicleMarkers = new Map()
 const vehiclePositions = new Map()
 const vehicleAnimations = new Map()
+const vehicleHeadings = new Map()
+const vehicleCompact = new Map()
 const typeColors = {
   bus: { background: '#00c99a', foreground: '#08251e' },
   tram: { background: '#ff642e', foreground: '#2a1008' },
   trolley: { background: '#174d9b', foreground: '#ffffff' },
   county: { background: '#ffbf80', foreground: '#3b2109' },
+  rail: { background: '#c4b5fd', foreground: '#241747' },
 }
 
 function escapeHtml(value) {
@@ -38,10 +43,19 @@ function escapeHtml(value) {
   })[character])
 }
 
-function createVehicleIcon(vehicle) {
+function createVehicleIcon(vehicle, compact) {
   const colors = typeColors[vehicle.transportType] || { background: '#d5ddd6', foreground: '#101311' }
+  if (compact) {
+    return L.divIcon({
+      html: `<span class="vehicle-dot" style="--vehicle-color:${colors.background}"></span>`,
+      className: 'vehicle-marker',
+      iconSize: [10, 10],
+      iconAnchor: [5, 5],
+    })
+  }
   const line = escapeHtml(vehicle.line)
-  const html = `<span class="vehicle-pin" style="--vehicle-color:${colors.background};--vehicle-foreground:${colors.foreground};--vehicle-heading:${Number(vehicle.heading) || 0}deg"><span class="vehicle-arrow"></span><span class="vehicle-line">${line}</span></span>`
+  const arrow = Number.isFinite(vehicle.heading) ? '<span class="vehicle-arrow"></span>' : ''
+  const html = `<span class="vehicle-pin" style="--vehicle-color:${colors.background};--vehicle-foreground:${colors.foreground};--vehicle-heading:${vehicle.heading ?? 0}deg">${arrow}<span class="vehicle-line">${line}</span></span>`
   return L.divIcon({
     html,
     className: 'vehicle-marker',
@@ -83,13 +97,15 @@ function renderRoute() {
   routeLayer.clearLayers()
   if (!props.trip) return
 
-  props.trip.legs.forEach((leg) => {
+  const routeLegs = props.trip.routeLegs || props.trip.legs
+  routeLegs.forEach((leg) => {
     if (leg.shapePoints.length > 1) {
       L.polyline(
         leg.shapePoints.map((point) => [point.lat, point.lon]),
         {
-          color: typeColors[leg.transportType]?.background || '#b7f36b',
-          weight: 5,
+          color: leg.type === 'walk' ? '#d5ddd6' : typeColors[leg.transportType]?.background || '#b7f36b',
+          weight: leg.type === 'walk' ? 3 : 5,
+          dashArray: leg.type === 'walk' ? '6 7' : null,
           opacity: 0.92,
           lineCap: 'round',
           lineJoin: 'round',
@@ -97,6 +113,18 @@ function renderRoute() {
       ).addTo(routeLayer)
     }
   })
+
+  if (props.trip.routeLegs) {
+    const first = routeLegs[0]?.shapePoints[0]
+    const last = routeLegs.at(-1)?.shapePoints.at(-1)
+    if (first) L.circleMarker([first.lat, first.lon], {
+      radius: 8, color: '#101311', weight: 3, fillColor: '#b7f36b', fillOpacity: 1,
+    }).bindTooltip('Algus').addTo(routeLayer)
+    if (last) L.circleMarker([last.lat, last.lon], {
+      radius: 8, color: '#101311', weight: 3, fillColor: '#ff8879', fillOpacity: 1,
+    }).bindTooltip('Sihtkoht').addTo(routeLayer)
+    return
+  }
 
   const first = props.trip.legs[0]?.pathStops[0] || props.trip.destinationWalk?.from
   const last = props.trip.legs.at(-1)?.pathStops.at(-1) || props.trip.destinationWalk?.from
@@ -124,22 +152,31 @@ function renderRoute() {
 }
 
 function vehiclesToShow() {
-  const leg = props.trip?.legs?.[0]
-  if (!leg) return props.trip ? [] : props.vehicles
+  if (!props.trip) {
+    const bounds = map.getBounds()
+    return props.vehicles.filter((vehicle) => bounds.contains(L.latLng(vehicle.lat, vehicle.lon)))
+  }
+  return props.trip.legs.flatMap((leg) => {
+    if (!leg.vehicle) return []
+    const selected = props.vehicles.find((vehicle) =>
+      vehicle.vehicleId === leg.vehicle.vehicleId &&
+      vehicle.line.toLowerCase() === leg.line.toLowerCase() &&
+      vehicle.transportType === leg.transportType,
+    )
+    return selected ? [selected] : []
+  })
+}
 
-  const candidates = props.vehicles.filter((vehicle) =>
-    vehicle.line.toLowerCase() === leg.line.toLowerCase() &&
-    vehicle.transportType === leg.transportType,
-  )
-  const selectedVehicleId = leg.vehicle?.vehicleId
-  const selected = candidates.find((vehicle) => vehicle.vehicleId === selectedVehicleId)
-  return selected ? [selected] : []
+function vehicleKey(vehicle) {
+  return `${vehicle.transportType}:${vehicle.line}:${vehicle.vehicleId}`
 }
 
 function updateVehicles() {
   if (!map || !vehicleLayer) return
   const vehicles = vehiclesToShow()
-  const visibleIds = new Set(vehicles.map((vehicle) => String(vehicle.vehicleId)))
+  const compact = !props.trip && map.getZoom() < 15
+  const visibleIds = new Set(vehicles.map(vehicleKey))
+  let needsFocus = false
 
   vehicleMarkers.forEach((marker, id) => {
     if (!visibleIds.has(id)) {
@@ -149,24 +186,38 @@ function updateVehicles() {
       vehicleLayer.removeLayer(marker)
       vehicleMarkers.delete(id)
       vehiclePositions.delete(id)
+      vehicleHeadings.delete(id)
+      vehicleCompact.delete(id)
     }
   })
 
   vehicles.forEach((vehicle) => {
-    const id = String(vehicle.vehicleId)
+    const id = vehicleKey(vehicle)
     const next = L.latLng(vehicle.lat, vehicle.lon)
     const existing = vehicleMarkers.get(id)
     if (!existing) {
-      const marker = L.marker(next, { icon: createVehicleIcon(vehicle), zIndexOffset: 500 })
+      if (props.trip && !map.getBounds().contains(next)) needsFocus = true
+      const marker = L.marker(next, {
+        icon: createVehicleIcon(vehicle, compact),
+        title: `${vehicle.transportType === 'tram' ? 'Tramm' : vehicle.transportType === 'trolley' ? 'Troll' : 'Buss'} ${vehicle.line}`,
+        zIndexOffset: 500,
+      })
         .bindTooltip(`${vehicle.transportType === 'tram' ? 'Tramm' : vehicle.transportType === 'trolley' ? 'Troll' : 'Buss'} ${escapeHtml(vehicle.line)}`)
         .addTo(vehicleLayer)
       vehicleMarkers.set(id, marker)
       vehiclePositions.set(id, next)
+      vehicleHeadings.set(id, vehicle.heading)
+      vehicleCompact.set(id, compact)
       return
     }
 
-    existing.setIcon(createVehicleIcon(vehicle))
+    if (vehicleHeadings.get(id) !== vehicle.heading || vehicleCompact.get(id) !== compact) {
+      existing.setIcon(createVehicleIcon(vehicle, compact))
+      vehicleHeadings.set(id, vehicle.heading)
+      vehicleCompact.set(id, compact)
+    }
     const previous = vehiclePositions.get(id) || existing.getLatLng()
+    if (previous.lat === next.lat && previous.lng === next.lng) return
     vehiclePositions.set(id, next)
     const startedAt = performance.now()
     const duration = 750
@@ -187,6 +238,7 @@ function updateVehicles() {
     if (previousAnimation) cancelAnimationFrame(previousAnimation)
     vehicleAnimations.set(id, requestAnimationFrame(animate))
   })
+  if (needsFocus) focusMap()
 }
 
 function updateUserLocation() {
@@ -207,7 +259,7 @@ function updateUserLocation() {
 
 function focusMap() {
   if (!map) return
-  const points = props.trip?.legs?.flatMap((leg) =>
+  const points = (props.trip?.routeLegs || props.trip?.legs)?.flatMap((leg) =>
     leg.shapePoints.map((point) => [point.lat, point.lon]),
   ) || []
   if (props.trip?.destinationWalk) {
@@ -216,10 +268,7 @@ function focusMap() {
     points.push([origin.lat, origin.lon])
     points.push([destination.lat, destination.lon])
   }
-  if (props.trip?.legs?.[0]?.vehicle) {
-    const vehicle = props.trip.legs[0].vehicle
-    points.push([vehicle.lat, vehicle.lon])
-  }
+  if (props.trip) vehiclesToShow().forEach((vehicle) => points.push([vehicle.lat, vehicle.lon]))
   if (!points.length && props.userLocation) points.push([props.userLocation.lat, props.userLocation.lon])
   if (points.length > 1) {
     map.fitBounds(L.latLngBounds(points), { padding: [34, 34], maxZoom: 15 })
@@ -232,10 +281,27 @@ function focusMap() {
 
 onMounted(() => {
   map = L.map(mapElement.value, { zoomControl: true, preferCanvas: true }).setView([59.437, 24.7536], 13)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const tileUrl = props.satellite
+    ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+    : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+  const tiles = L.tileLayer(tileUrl, {
     maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
-  }).addTo(map)
+    attribution: props.satellite
+      ? 'Imagery &copy; Esri, Vantor,<br>Earthstar Geographics, GIS User Community'
+      : '&copy; OpenStreetMap contributors',
+  })
+  if (props.satellite) {
+    tiles.once('tileerror', () => {
+      if (!map) return
+      map.removeLayer(tiles)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map)
+      emit('map-error', 'Satelliidipilt pole saadaval; kuvatakse tavakaart.')
+    })
+  }
+  tiles.addTo(map)
   stopLayer = L.layerGroup().addTo(map)
   routeLayer = L.layerGroup().addTo(map)
   vehicleLayer = L.layerGroup().addTo(map)
@@ -244,6 +310,7 @@ onMounted(() => {
   updateVehicles()
   updateUserLocation()
   focusMap()
+  if (!props.trip) map.on('moveend', updateVehicles)
   resizeObserver = new ResizeObserver(() => {
     if (resizeFrame) cancelAnimationFrame(resizeFrame)
     resizeFrame = requestAnimationFrame(() => {
@@ -255,6 +322,7 @@ onMounted(() => {
 })
 
 watch(() => props.vehicles, updateVehicles)
+watch(() => props.trip?.legs?.map((leg) => `${leg.trackingKey}:${leg.vehicle?.vehicleId ?? ''}`).join('|'), updateVehicles)
 watch(() => props.trip ? `${props.trip.id}-${props.trip.departsAt?.getTime()}` : '', () => {
   renderStops()
   renderRoute()
@@ -277,9 +345,11 @@ onUnmounted(() => {
 </template>
 
 <style>
-.live-map { width: 100%; height: 390px; border: 1px solid #303832; border-radius: 12px; background: #d7ddd4; }
+.live-map { width: 100%; height: 390px; overflow: hidden; border: 1px solid #536957; border-radius: 23px; background: #26342a; }
+.live-map .leaflet-tile-pane { filter: brightness(.58) saturate(.75); }
 .vehicle-marker { border: 0; background: transparent; }
-.vehicle-pin { position: relative; display: grid; width: 38px; height: 38px; place-items: center; border: 2px solid #101311; border-radius: 11px; color: var(--vehicle-foreground); background: var(--vehicle-color); box-shadow: 0 2px 8px #0008; }
+.vehicle-dot { display: block; width: 10px; height: 10px; border: 1px solid #142019; border-radius: 50%; background: var(--vehicle-color); box-shadow: 0 1px 3px #000b; }
+.vehicle-pin { position: relative; display: grid; width: 38px; height: 38px; place-items: center; border: 2px solid #172019; border-radius: 50%; color: var(--vehicle-foreground); background: var(--vehicle-color); box-shadow: 0 2px 8px #0008; }
 .vehicle-line { position: relative; z-index: 1; font: 700 14px/1 'Segoe UI', Arial, sans-serif; }
 .vehicle-arrow { position: absolute; top: -5px; left: 13px; width: 0; height: 0; border-right: 5px solid transparent; border-bottom: 10px solid #101311; border-left: 5px solid transparent; transform: rotate(var(--vehicle-heading)); transform-origin: 5px 24px; }
 .leaflet-tooltip { font-family: 'Segoe UI', Arial, sans-serif; }

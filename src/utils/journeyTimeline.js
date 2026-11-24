@@ -1,4 +1,52 @@
 export function journeyTimeline(trip, userStop = null, expandedLegs = new Set()) {
+  if (trip.routeLegs) {
+    const rows = []
+    let previousEnd = null
+    let transitIndex = 0
+    trip.routeLegs.forEach((leg, index) => {
+      const startStop = leg.type === 'walk' ? leg.from : leg.pathStops[0]
+      const endStop = leg.type === 'walk' ? leg.to : leg.pathStops.at(-1)
+      const waiting = previousEnd ? Math.round((leg.departsAt - previousEnd) / 60_000) : 0
+      if (waiting > 0) rows.push({ type: 'wait', minutes: waiting, connection: 'wait' })
+      const previousStop = waiting > 0 ? null : rows.at(-1)
+      const alreadyAtStop = previousStop?.type === 'stop' && previousStop.stop.id === startStop.id
+      if (!index || (leg.type === 'transit' && !alreadyAtStop)) {
+        rows.push({
+          type: 'stop', stop: startStop, timeAt: leg.departsAt,
+          marker: index ? leg.transportType : 'origin',
+          connection: leg.type === 'walk' ? 'walk' : leg.transportType,
+        })
+      }
+      if (leg.type === 'walk') {
+        rows.push({ type: 'walk', minutes: leg.durationMinutes, distanceMeters: leg.distanceMeters, connection: 'walk' })
+      } else {
+        if (leg.stopTimes.length > 2) {
+          rows.push({
+            type: 'toggle', legIndex: transitIndex, line: leg.line,
+            stopCount: leg.stopTimes.length - 2, durationMinutes: leg.durationMinutes,
+            connection: leg.transportType,
+          })
+          if (expandedLegs.has(transitIndex)) {
+            leg.stopTimes.slice(1, -1).forEach((entry) => rows.push({
+              type: 'stop', stop: entry.stop, timeAt: entry.arrivalAt,
+              marker: leg.transportType, connection: leg.transportType,
+            }))
+          }
+        }
+        transitIndex += 1
+      }
+      rows.push({
+        type: 'stop', stop: endStop, timeAt: leg.arrivalAt,
+        marker: index === trip.routeLegs.length - 1 ? 'destination' : leg.transportType || 'transfer',
+        connection: index === trip.routeLegs.length - 1 ? null
+          : trip.routeLegs[index + 1].departsAt > leg.arrivalAt ? 'wait'
+            : trip.routeLegs[index + 1].type === 'walk' ? 'walk' : trip.routeLegs[index + 1].transportType,
+      })
+      previousEnd = leg.arrivalAt
+    })
+    return rows
+  }
+
   const rows = []
   const addStop = (stop, timeAt, marker, connection, detail, line = '') => {
     rows.push({ type: 'stop', stop, timeAt, marker, connection, detail, line })

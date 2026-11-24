@@ -4,6 +4,8 @@ import { distanceBetween } from '../utils/etaCalculator.js'
 const TRANSFER_MINUTES = 5
 const MAX_SEARCH_HOURS = 4
 const MAX_LIVE_APPROACH_METERS = 5000
+const MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES = 15
+const LIVE_MATCH_AMBIGUITY_MS = 60_000
 const MAX_DESTINATION_WALK_METERS = 1000
 const WALK_DISTANCE_FACTOR = 1.2
 const WALK_METERS_PER_MINUTE = 70
@@ -100,6 +102,7 @@ function makeLeg(instance, fromIndex, toIndex, vehicles, now) {
 
   return {
     tripId: instance.id,
+    trackingKey: `${instance.id}:${instance.serviceDate.getTime()}`,
     _instance: instance,
     _boardingIndex: fromIndex,
     routeId: instance.route.id,
@@ -248,39 +251,193 @@ function projectOnShape(location, shapePoints) {
   return best
 }
 
-function findLiveVehicle(instance, boarding, vehicles, now) {
+function scheduledTimeAtProgress(instance, progress) {
+  for (let index = 1; index < instance.stopTimes.length; index += 1) {
+    const previous = instance.stopTimes[index - 1]
+    const next = instance.stopTimes[index]
+    if (!Number.isFinite(previous.shapeDistance) || !Number.isFinite(next.shapeDistance) ||
+        next.shapeDistance <= previous.shapeDistance ||
+        progress < previous.shapeDistance || progress > next.shapeDistance) continue
+    const fraction = (progress - previous.shapeDistance) / (next.shapeDistance - previous.shapeDistance)
+    return previous.departureAt.getTime() + fraction * (next.arrivalAt - previous.departureAt)
+  }
+  return null
+}
+
+function findLiveVehicle(instance, boarding, vehicles, now, { trackedVehicleId, alighting, competingEntries = [] } = {}) {
   if (instance.route.type === 'county' || !vehicles.length || !instance.shape?.points?.length || !Number.isFinite(boarding.shapeDistance)) return null
 
+  const competingTrips = trackedVehicleId ? [] : competingEntries
+    .filter(({ instance: other, index }) =>
+      other.route.id === instance.route.id &&
+      other.direction === instance.direction &&
+      Math.abs(other.stopTimes[index].departureAt - boarding.departureAt) <= MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES * 120_000 &&
+      (other.id !== instance.id || other.serviceDate.getTime() !== instance.serviceDate.getTime() ||
+        other.stopTimes[index].departureAt.getTime() !== boarding.departureAt.getTime()),
+    )
   const candidates = vehicles
     .filter((vehicle) =>
       !vehicle.isSimulated &&
+      (trackedVehicleId ? vehicle.vehicleId === trackedVehicleId : Number.isFinite(vehicle.heading)) &&
       vehicle.line.toLowerCase() === instance.route.number.toLowerCase() &&
       vehicle.transportType === instance.route.type,
     )
     .map((vehicle) => {
       const projection = projectOnShape({ lat: vehicle.lat, lon: vehicle.lon }, instance.shape.points)
       if (!projection || projection.distance > 180) return null
-      if (angleDifference(projection.bearing, Number(vehicle.heading) || 0) > 65) return null
+      if (Number.isFinite(vehicle.heading) && angleDifference(projection.bearing, vehicle.heading) > 65) return null
       const distanceToStop = boarding.shapeDistance - projection.progress
-      if (distanceToStop < 0 || distanceToStop > MAX_LIVE_APPROACH_METERS) return null
+      if (distanceToStop < 0) {
+        if (!Number.isFinite(alighting?.shapeDistance) || projection.progress > alighting.shapeDistance) return null
+        const scheduledAt = scheduledTimeAtProgress(instance, projection.progress)
+        if (!trackedVehicleId) {
+          if (scheduledAt === null) return null
+          const difference = Math.abs(now - scheduledAt)
+          if (difference > MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES * 60_000) return null
+          const ambiguous = competingTrips.some(({ instance: other }) => {
+            if (!other.shape?.points?.length) return false
+            const otherProjection = other.shape === instance.shape
+              ? projection
+              : projectOnShape({ lat: vehicle.lat, lon: vehicle.lon }, other.shape.points)
+            if (!otherProjection || otherProjection.distance > 180 ||
+                angleDifference(otherProjection.bearing, vehicle.heading) > 65) return false
+            const otherTime = scheduledTimeAtProgress(other, otherProjection.progress)
+            return otherTime !== null && Math.abs(now - otherTime) < difference + LIVE_MATCH_AMBIGUITY_MS
+          })
+          if (ambiguous) return null
+        }
+        return {
+          vehicle, distance: projection.distance, distanceToStop: null, etaMinutes: null,
+          estimatedDepartureAt: null, delayMilliseconds: scheduledAt === null ? null : now - scheduledAt,
+          delayMinutes: null,
+        }
+      }
+      if (distanceToStop > MAX_LIVE_APPROACH_METERS) return null
 
       const speed = Number(vehicle.speed) > 3 ? Number(vehicle.speed) : 18
       const etaMinutes = Math.max(0, distanceToStop / 1000 / speed * 60)
       const estimatedDepartureAt = new Date(now.getTime() + etaMinutes * 60_000)
+      const difference = Math.abs(estimatedDepartureAt - boarding.departureAt)
+      if (!trackedVehicleId && (
+        difference > MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES * 60_000 ||
+        competingTrips.some(({ instance: other, index }) =>
+          Math.abs(estimatedDepartureAt - other.stopTimes[index].departureAt) < difference + LIVE_MATCH_AMBIGUITY_MS)
+      )) return null
       return {
         vehicle,
         distance: projection.distance,
         distanceToStop,
         etaMinutes,
         estimatedDepartureAt,
+        delayMilliseconds: estimatedDepartureAt - boarding.departureAt,
         delayMinutes: Math.round((estimatedDepartureAt - boarding.departureAt) / 60_000),
       }
     })
     .filter(Boolean)
 
-  return candidates.sort((a, b) =>
-    a.distance - b.distance || a.etaMinutes - b.etaMinutes,
-  )[0] || null
+  candidates.sort((a, b) => Math.abs(a.delayMilliseconds) - Math.abs(b.delayMilliseconds) || a.distance - b.distance)
+  if (!trackedVehicleId && candidates.length > 1 &&
+      Math.abs(candidates[1].delayMilliseconds) - Math.abs(candidates[0].delayMilliseconds) < LIVE_MATCH_AMBIGUITY_MS) return null
+  return candidates[0] || null
+}
+
+function resolveVehicleMatches(candidates) {
+  const bestByVehicle = new Map()
+  candidates.forEach(({ match, tripKey }) => {
+    if (!match) return
+    const key = `${match.vehicle.transportType}:${match.vehicle.line}:${match.vehicle.vehicleId}`
+    const previous = bestByVehicle.get(key)
+    if (!previous || Math.abs(match.delayMilliseconds ?? Infinity) < Math.abs(previous.match.delayMilliseconds ?? Infinity)) {
+      bestByVehicle.set(key, { match, tripKey })
+    }
+  })
+
+  return candidates.map(({ match, tripKey }) => {
+    if (!match) return null
+    const key = `${match.vehicle.transportType}:${match.vehicle.line}:${match.vehicle.vehicleId}`
+    return bestByVehicle.get(key).tripKey === tripKey ? match : null
+  })
+}
+
+export function matchItineraryVehicles(trips, data, vehicles, trackedVehicles = new Map(), now = new Date()) {
+  const legs = trips.flatMap((trip) => trip.legs)
+  const stopCandidates = new Map()
+  for (const leg of legs) {
+    if (leg.transportType === 'county') continue
+    const boarding = leg.pathStops[0]
+    stopCandidates.set(leg.trackingKey, data.stops.filter((stop) =>
+      stop.name.toLocaleLowerCase('et') === boarding.name.toLocaleLowerCase('et') &&
+      distanceBetween(stop.coordinates, boarding.coordinates) <= 50,
+    ))
+  }
+  const ids = [...new Set([...stopCandidates.values()].flat().map((stop) => stop.id))]
+  if (!ids.length || !vehicles.length) return trips
+
+  const byDay = new Map()
+  const reserved = new Map([...trackedVehicles].map(([key, vehicle]) =>
+    [`${vehicle.transportType}:${vehicle.line.toLowerCase()}:${vehicle.vehicleId}`, key],
+  ))
+  const candidates = legs.map((leg) => {
+    const localStops = stopCandidates.get(leg.trackingKey) || []
+    if (!localStops.length) return { tripKey: leg.trackingKey, match: null }
+    const day = `${leg.departsAt.getFullYear()}-${leg.departsAt.getMonth()}-${leg.departsAt.getDate()}`
+    if (!byDay.has(day)) byDay.set(day, getTripInstances(data, leg.departsAt, ids).byStop)
+    const byStop = byDay.get(day)
+    const matching = localStops.flatMap((stop) => (byStop.get(stop.id) || [])
+      .filter(({ instance, index }) => {
+        const entry = instance.stopTimes[index]
+        if (instance.route.number.toLowerCase() !== leg.line.toLowerCase() ||
+            instance.route.type !== leg.transportType ||
+            Math.abs(entry.departureAt - leg.departsAt) > 30_000) return false
+        const destination = leg.pathStops.at(-1)
+        return instance.stopTimes.slice(index + 1).some((item) =>
+          item.stop.name.toLocaleLowerCase('et') === destination.name.toLocaleLowerCase('et') &&
+          distanceBetween(item.stop.coordinates, destination.coordinates) <= 50 &&
+          Math.abs(item.arrivalAt - leg.arrivalAt) <= 60_000,
+        )
+      }))
+    if (matching.length !== 1) return { tripKey: leg.trackingKey, match: null }
+    const { instance, index } = matching[0]
+    const destination = leg.pathStops.at(-1)
+    const alighting = instance.stopTimes.slice(index + 1).find((entry) =>
+      entry.stop.name.toLocaleLowerCase('et') === destination.name.toLocaleLowerCase('et') &&
+      distanceBetween(entry.stop.coordinates, destination.coordinates) <= 50 &&
+      Math.abs(entry.arrivalAt - leg.arrivalAt) <= 60_000,
+    )
+    const match = findLiveVehicle(instance, instance.stopTimes[index], vehicles.filter((vehicle) => {
+      const owner = reserved.get(`${vehicle.transportType}:${vehicle.line.toLowerCase()}:${vehicle.vehicleId}`)
+      return !owner || owner === leg.trackingKey
+    }), now, {
+      trackedVehicleId: trackedVehicles.get(leg.trackingKey)?.vehicleId,
+      alighting,
+      competingEntries: byStop.get(instance.stopTimes[index].stop.id) || [],
+    })
+    return { tripKey: leg.trackingKey, match }
+  })
+  const matches = resolveVehicleMatches(candidates)
+  let index = 0
+  return trips.map((trip) => {
+    const matchedLegs = new Map()
+    const updatedLegs = trip.legs.map((leg) => {
+      const match = matches[index++]
+      const updated = {
+        ...leg,
+        isLive: Boolean(match),
+        isSimulated: Boolean(match?.vehicle.isSimulated),
+        vehicle: match?.vehicle || null,
+        liveDistance: match?.distanceToStop ?? null,
+        estimatedDelayMinutes: match?.delayMinutes ?? null,
+        estimatedDepartureAt: match ? match.estimatedDepartureAt : leg.departsAt,
+      }
+      matchedLegs.set(leg.trackingKey, updated)
+      return updated
+    })
+    return {
+      ...trip,
+      legs: updatedLegs,
+      routeLegs: trip.routeLegs.map((leg) => matchedLegs.get(leg.trackingKey) || leg),
+    }
+  })
 }
 
 function createDirectTrips(instancesByStop, fromStops, destinationIds, walkingOptions, requestedAt, searchMode) {
@@ -471,6 +628,7 @@ export function planRoutes({
   searchMode = 'depart',
   count = 5,
   includeWalkingOnly = true,
+  trackedVehicles = new Map(),
 }) {
   if (!fromStops.length || !toStops.length || !data?.trips) return []
   const destinationIds = new Set(toStops.map((stop) => stop.id))
@@ -547,23 +705,39 @@ export function planRoutes({
       : a.departsAt - b.departsAt || a.durationMinutes - b.durationMinutes)
   }
 
+  const liveLegs = results.flatMap((trip) => trip.legs)
+  const reservedVehicles = new Map([...trackedVehicles].map(([key, vehicle]) =>
+    [`${vehicle.transportType}:${vehicle.line.toLowerCase()}:${vehicle.vehicleId}`, key],
+  ))
+  const liveMatches = resolveVehicleMatches(liveLegs.map((leg) => ({
+    tripKey: leg.trackingKey,
+    match: findLiveVehicle(
+      leg._instance,
+      leg._instance.stopTimes[leg._boardingIndex],
+      vehicles.filter((vehicle) => {
+        const owner = reservedVehicles.get(`${vehicle.transportType}:${vehicle.line.toLowerCase()}:${vehicle.vehicleId}`)
+        return !owner || owner === leg.trackingKey
+      }),
+      now,
+      {
+        trackedVehicleId: trackedVehicles.get(leg.trackingKey)?.vehicleId,
+        alighting: leg._instance.stopTimes[leg._boardingIndex + leg.stopCount],
+        competingEntries: instancesByStop.get(leg.pathStops[0].id) || [],
+      },
+    ),
+  })))
+  liveLegs.forEach((leg, index) => {
+    const liveMatch = liveMatches[index]
+    leg.isLive = Boolean(liveMatch)
+    leg.isSimulated = Boolean(liveMatch?.vehicle.isSimulated)
+    leg.vehicle = liveMatch?.vehicle || null
+    leg.liveDistance = liveMatch?.distanceToStop ?? null
+    leg.estimatedDelayMinutes = liveMatch?.delayMinutes ?? null
+    leg.estimatedDepartureAt = liveMatch ? liveMatch.estimatedDepartureAt : leg.departsAt
+    delete leg._instance
+    delete leg._boardingIndex
+  })
   results.forEach((trip) => {
-    trip.legs.forEach((leg) => {
-      const liveMatch = findLiveVehicle(
-        leg._instance,
-        leg._instance.stopTimes[leg._boardingIndex],
-        vehicles,
-        now,
-      )
-      leg.isLive = Boolean(liveMatch)
-      leg.isSimulated = Boolean(liveMatch?.vehicle.isSimulated)
-      leg.vehicle = liveMatch?.vehicle || null
-      leg.liveDistance = liveMatch?.distanceToStop ?? null
-      leg.estimatedDelayMinutes = liveMatch?.delayMinutes ?? null
-      leg.estimatedDepartureAt = liveMatch?.estimatedDepartureAt || leg.departsAt
-      delete leg._instance
-      delete leg._boardingIndex
-    })
     if (trip.legs.length) {
       trip.isLive = trip.legs[0].isLive
       trip.vehicle = trip.legs[0].vehicle
@@ -580,17 +754,21 @@ export function getDeparturesAtStop(data, stop, at = new Date(), vehicles = [], 
   const { byStop } = getTripInstances(data, now, [stop.id])
   const upcoming = []
   const seenRoutes = new Set()
+  let futureCount = 0
 
   for (const { instance, index } of byStop.get(stop.id) || []) {
     if (instance.stopTimes[index].pickupType === '1') continue
     const entry = instance.stopTimes[index]
-    if (entry.departureAt < now || !instance.stopTimes[index + 1]) continue
+    if (entry.departureAt < now.getTime() - MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES * 60_000 || !instance.stopTimes[index + 1]) continue
+    if (futureCount >= count && entry.departureAt > now.getTime() + MAX_LIVE_SCHEDULE_DIFFERENCE_MINUTES * 60_000) break
     const key = `${instance.route.id}-${entry.departureAt.getTime()}`
     if (seenRoutes.has(key)) continue
     seenRoutes.add(key)
+    if (entry.departureAt >= now) futureCount += 1
     const nextStop = instance.stopTimes[index + 1].stop
     upcoming.push({
       id: `${instance.id}-${stop.id}-${entry.departureSeconds}`,
+      routeId: instance.route.id,
       line: instance.route.number,
       transportType: instance.route.type,
       destination: entry.headsign || instance.headsign || instance.route.destination,
@@ -605,18 +783,25 @@ export function getDeparturesAtStop(data, stop, at = new Date(), vehicles = [], 
       _instance: instance,
       _index: index,
     })
-    if (upcoming.length >= count) break
   }
 
-  return upcoming.map(({ _instance, _index, ...departure }) => {
-    const liveMatch = findLiveVehicle(_instance, _instance.stopTimes[_index], vehicles, now)
+  const matches = resolveVehicleMatches(upcoming.map(({ _instance, _index, scheduledAt }) => ({
+    tripKey: `${_instance.id}:${_instance.serviceDate.getTime()}:${scheduledAt.getTime()}`,
+    match: findLiveVehicle(_instance, _instance.stopTimes[_index], vehicles, now, {
+      competingEntries: byStop.get(stop.id) || [],
+    }),
+  })))
+  return upcoming.flatMap(({ _instance, _index, ...departure }, index) => {
+    const liveMatch = matches[index]
+    if (departure.scheduledAt < now && !liveMatch) return []
     return {
       ...departure,
+      minutes: liveMatch ? Math.max(0, Math.ceil(liveMatch.etaMinutes)) : departure.minutes,
       isLive: Boolean(liveMatch),
       isSimulated: Boolean(liveMatch?.vehicle.isSimulated),
       distance: liveMatch?.distanceToStop ?? null,
       vehicleId: liveMatch?.vehicle.vehicleId || null,
       estimatedDelayMinutes: liveMatch?.delayMinutes ?? null,
     }
-  })
+  }).sort((a, b) => a.minutes - b.minutes || a.scheduledAt - b.scheduledAt).slice(0, count)
 }

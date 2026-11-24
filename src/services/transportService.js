@@ -2,7 +2,7 @@ const GPS_URL = '/api/tallinn/gps.txt'
 const REQUEST_TIMEOUT_MS = 8000
 const FALLBACK_SPEEDS = [19, 24, 28, 16, 22, 31]
 
-function parseGpsText(text) {
+export function parseGpsText(text) {
   const rows = text.trim().split(/\r?\n/).filter(Boolean)
   if (rows.length === 0) return []
 
@@ -15,16 +15,20 @@ function parseGpsText(text) {
     if (columns.length < 7) return []
 
     const [rawType, rawLine, rawLon, rawLat, rawSpeed, rawHeading, rawVehicleId] = columns
-    const longitude = Number(rawLon)
-    const latitude = Number(rawLat)
-    const speed = Number(rawSpeed)
-    const heading = Number(rawHeading)
+    const rawLongitude = Number(rawLon)
+    const rawLatitude = Number(rawLat)
+    const longitude = Math.abs(rawLongitude) > 180 ? rawLongitude / 1_000_000 : rawLongitude
+    const latitude = Math.abs(rawLatitude) > 90 ? rawLatitude / 1_000_000 : rawLatitude
+    const speed = rawSpeed === '' ? 0 : Number(rawSpeed)
+    const heading = rawHeading === '' ? null : Number(rawHeading)
     const transportType = normalizeTransportType(rawType)
 
     if (
       !transportType ||
       !rawLine ||
       !rawVehicleId ||
+      !rawLon ||
+      !rawLat ||
       !Number.isFinite(longitude) ||
       !Number.isFinite(latitude) ||
       Math.abs(longitude) > 180 ||
@@ -37,7 +41,7 @@ function parseGpsText(text) {
       lon: longitude,
       lat: latitude,
       speed: Number.isFinite(speed) ? speed : 0,
-      heading: Number.isFinite(heading) ? heading : 0,
+      heading: Number.isFinite(heading) && heading >= 0 && heading < 360 ? heading : null,
       vehicleId: rawVehicleId,
       isSimulated: false,
     }]
@@ -46,6 +50,9 @@ function parseGpsText(text) {
 
 function normalizeTransportType(value) {
   const type = value.toLowerCase()
+  if (type === '1') return 'trolley'
+  if (type === '2' || type === '7') return 'bus'
+  if (type === '3') return 'tram'
   if (type.includes('tram')) return 'tram'
   if (type.includes('troll')) return 'trolley'
   if (type.includes('bus')) return 'bus'

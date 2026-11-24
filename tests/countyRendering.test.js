@@ -5,14 +5,15 @@ import { renderToString } from '@vue/server-renderer'
 import { createServer } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-test('renders county departures and planner cards with the county appearance', async (t) => {
+test('renders county departures and leaves the collapsed planner idle', async (t) => {
   const server = await createServer({
     configFile: false,
     plugins: [{
       name: 'stub-leaflet-map',
       enforce: 'pre',
       resolveId(source, importer) {
-        if (source === './LiveMap.vue' && importer?.endsWith('TripPlanner.vue')) return '\0test-map'
+        if ((source === './LiveMap.vue' && importer?.endsWith('TripPlanner.vue')) ||
+            (source === './components/LiveMap.vue' && importer?.endsWith('App.vue'))) return '\0test-map'
       },
       load(id) {
         if (id === '\0test-map') return 'export default { render: () => null }'
@@ -23,16 +24,22 @@ test('renders county departures and planner cards with the county appearance', a
   })
   t.after(() => server.close())
 
+  const { default: App } = await server.ssrLoadModule('/src/App.vue')
+  const app = await renderToString(createSSRApp(App))
+  assert.doesNotMatch(app, /topbar-note|Tallinn, Eesti/)
+
   const { default: DepartureBoard } = await server.ssrLoadModule('/src/components/DepartureBoard.vue')
   const board = await renderToString(createSSRApp(DepartureBoard, {
     stopName: 'Kiili',
     departures: [{
-      id: 'county-116', line: '116', transportType: 'county', destination: 'Viru',
+      id: 'county-116', routeId: 'county:harjumaa116', line: '116', transportType: 'county', destination: 'Viru',
       minutes: 5, scheduledAt: new Date(), isLive: false, estimatedDelayMinutes: null,
     }],
   }))
   assert.match(board, /class="(?=[^"]*\broute-number\b)(?=[^"]*\bcounty\b)[^"]*"/)
   assert.match(board, /MAAKONNA SÕIDUPLAAN/)
+  assert.match(board, /https:\/\/web\.peatus\.ee\/linjat\/estonia:harjumaa116/)
+  assert.match(board, /Vaata asukohta Peatus.ee-s/)
   assert.doesNotMatch(board, /LIVE GPS · HINNANG/)
 
   const { default: TripPlanner } = await server.ssrLoadModule('/src/components/TripPlanner.vue')
@@ -60,6 +67,5 @@ test('renders county departures and planner cards with the county appearance', a
     exceptions: [],
   }
   const planner = await renderToString(createSSRApp(TripPlanner, { data, stops: data.stops, vehicles: [] }))
-  assert.match(planner, /class="(?=[^"]*\broute-line-chip\b)(?=[^"]*\bcounty\b)[^"]*"/)
-  assert.match(planner, /Liin 116/)
+  assert.doesNotMatch(planner, /class="(?=[^"]*\broute-line-chip\b)(?=[^"]*\bcounty\b)[^"]*"/)
 })
