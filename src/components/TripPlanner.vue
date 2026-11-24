@@ -125,7 +125,7 @@ const scheduleNote = computed(() => {
   const validUntil = endDate
     ? `${endDate.slice(6, 8)}.${endDate.slice(4, 6)}.${endDate.slice(0, 4)}`
     : 'teadmata'
-  return `Ametlik TLT sõiduplaan kehtib kuni ${validUntil}. Hilinemise hinnang arvutatakse GPS-asukoha ja graafiku võrdlusest.`
+  return `Ametlik TLT sõiduplaan kehtib kuni ${validUntil}. Maakonnaliinidel näidatakse sõiduplaani; Tallinna GPS-i põhine hilinemine on hinnanguline.`
 })
 
 function clearSelection() {
@@ -483,7 +483,7 @@ function delayText(trip) {
             </p>
             <div class="map-caption">
               <strong>Teekond kaardil</strong>
-              <span>{{ trip.isWalkingOnly ? 'Kõndimise suund on hinnanguline' : trip.legs[0].isLive && !trip.legs[0].isSimulated ? 'Reaalaja GPS · hilinemise hinnang' : 'TLT sõiduplaani teekonnakuju' }}</span>
+              <span>{{ trip.isWalkingOnly ? 'Kõndimise suund on hinnanguline' : trip.legs[0].isLive && !trip.legs[0].isSimulated ? 'Reaalaja GPS · hilinemise hinnang' : 'Sõiduplaani teekonnakuju' }}</span>
             </div>
             <LiveMap :stops="stops" :vehicles="vehicles" :trip="trip" :user-location="userLocation" />
           </div>
@@ -534,6 +534,7 @@ function delayText(trip) {
 .route-line-chip { display: flex; min-width: 0; overflow: hidden; align-items: center; gap: 6px; padding: 0 8px; border-radius: 4px; color: #08251e; background: #00c99a; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .route-line-chip.tram { color: #2a1008; background: #ff642e; }
 .route-line-chip.trolley { color: #fff; background: #174d9b; }
+.route-line-chip.county { color: #3b2109; background: #ffbf80; }
 .transport-icon { width: 18px; height: 18px; flex: 0 0 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .walk-chip { display: flex; min-width: 0; overflow: hidden; align-items: center; justify-content: center; gap: 3px; border-radius: 4px; color: #303630; background: #d7dad7; font-size: 16px; white-space: nowrap; }
 .walk-chip small { font-size: 11px; }
@@ -553,12 +554,14 @@ function delayText(trip) {
 .journey-step.connection-bus::after { border-color: #00c99a; }
 .journey-step.connection-tram::after { border-color: #ff642e; }
 .journey-step.connection-trolley::after { border-color: #174d9b; }
+.journey-step.connection-county::after { border-color: #ffbf80; }
 .journey-step.connection-walk::after { border-left-style: dotted; border-color: #a8b1a9; }
 .journey-step.connection-wait::after { border-color: #838c84; }
 .timeline-marker { z-index: 1; width: 18px; height: 18px; border: 4px solid #a8b1a9; border-radius: 50%; background: #141815; }
 .marker-bus { border-color: #00c99a; }
 .marker-tram { border-color: #ff642e; }
 .marker-trolley { border-color: #174d9b; }
+.marker-county { border-color: #ffbf80; }
 .marker-origin, .marker-destination { border-width: 5px; background: #fff; }
 .marker-origin { border-color: #69ae19; }
 .marker-destination { border-color: #fa729a; }

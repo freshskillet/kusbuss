@@ -249,7 +249,7 @@ function projectOnShape(location, shapePoints) {
 }
 
 function findLiveVehicle(instance, boarding, vehicles, now) {
-  if (!vehicles.length || !instance.shape?.points?.length || !Number.isFinite(boarding.shapeDistance)) return null
+  if (instance.route.type === 'county' || !vehicles.length || !instance.shape?.points?.length || !Number.isFinite(boarding.shapeDistance)) return null
 
   const candidates = vehicles
     .filter((vehicle) =>
@@ -585,7 +585,7 @@ export function getDeparturesAtStop(data, stop, at = new Date(), vehicles = [], 
     if (instance.stopTimes[index].pickupType === '1') continue
     const entry = instance.stopTimes[index]
     if (entry.departureAt < now || !instance.stopTimes[index + 1]) continue
-    const key = `${instance.route.number}-${entry.departureAt.getTime()}`
+    const key = `${instance.route.id}-${entry.departureAt.getTime()}`
     if (seenRoutes.has(key)) continue
     seenRoutes.add(key)
     const nextStop = instance.stopTimes[index + 1].stop

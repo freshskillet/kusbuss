@@ -154,6 +154,7 @@ onUnmounted(() => {
               <span><i class="legend-dot bus"></i>Buss</span>
               <span><i class="legend-dot tram"></i>Tramm</span>
               <span><i class="legend-dot trolley"></i>Troll</span>
+              <span><i class="legend-dot county"></i>Maakonnabuss</span>
             </div>
             <p>Uueneb automaatselt iga 10 sekundi järel</p>
           </div>
@@ -170,6 +171,7 @@ onUnmounted(() => {
 
     <footer class="page-footer">
       <span>Liigu linnas omas rütmis.</span>
+      <a href="https://peatus.ee/content/Veebilehest%20ja%20%C3%BChistranspordi%20avaandmetest">Andmed: ühistranspordiregister / peatus.ee</a>
       <span>KusBuss <span class="footer-divider">/</span> Tallinn</span>
     </footer>
   </main>
@@ -251,7 +253,9 @@ a { color: inherit; text-decoration: none; }
 .legend-dot.bus { background: #00c99a; }
 .legend-dot.tram { background: #ff642e; }
 .legend-dot.trolley { background: #174d9b; }
-.page-footer { display: flex; justify-content: space-between; margin-top: auto; padding: 32px 0 24px; color: #929a94; font-size: 12px; }
+.legend-dot.county { background: #ffbf80; }
+.page-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: auto; padding: 32px 0 24px; color: #929a94; font-size: 12px; }
+.page-footer a { color: inherit; }
 .footer-divider { padding: 0 5px; color: #424a44; }
 
 @media (max-width: 760px) {

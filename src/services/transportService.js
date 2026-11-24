@@ -87,6 +87,7 @@ function createSimulatedVehicles(stops) {
   const routeAnchors = new Map()
   stops.forEach((stop) => {
     stop.routes.forEach((route) => {
+      if (route.transportType === 'county') return
       const key = `${route.transportType}-${route.line}`
       if (!routeAnchors.has(key)) routeAnchors.set(key, { stop, route })
     })

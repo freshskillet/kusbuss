@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'csv-parse/sync'
 import { gzipSync, unzipSync } from 'fflate'
+import { downloadCountyTransitData } from './countyTransitData.js'
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
 const projectDirectory = resolve(scriptDirectory, '..')
@@ -226,12 +227,13 @@ async function main() {
     trips,
   }
 
+  await downloadCountyTransitData(data)
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, gzipSync(new TextEncoder().encode(JSON.stringify(data)), { level: 9 }))
 
   console.log(
-    `GTFS uuendatud: ${routes.length} liini, ${stops.length} peatust, ` +
-    `${trips.length} sõitu, ${shapes.length} teekonnakuju. Voo kehtivus: ` +
+    `GTFS uuendatud: ${data.routes.length} liini, ${data.stops.length} peatust, ` +
+    `${data.trips.length} sõitu, ${data.shapes.length} teekonnakuju. Tallinna voo kehtivus: ` +
     `${data.source.startDate}–${data.source.endDate}.`,
   )
   console.log(`Andmestik: ${outputPath}`)

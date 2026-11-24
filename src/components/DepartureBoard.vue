@@ -9,6 +9,7 @@ const typeNames = {
   bus: 'Buss',
   tram: 'Tramm',
   trolley: 'Troll',
+  county: 'Maakond',
 }
 
 function formatClock(date) {
@@ -38,7 +39,7 @@ function formatClock(date) {
         <div class="destination-cell">
           <span class="destination-name">{{ departure.destination }}</span>
           <span class="destination-meta">
-            {{ departure.isLive ? (departure.isSimulated ? 'DEMO GPS · HINNANG' : 'LIVE GPS · HINNANG') : 'TLT SÕIDUPLAAN' }}
+            {{ departure.isLive ? (departure.isSimulated ? 'DEMO GPS · HINNANG' : 'LIVE GPS · HINNANG') : departure.transportType === 'county' ? 'MAAKONNA SÕIDUPLAAN' : 'TLT SÕIDUPLAAN' }}
             <span v-if="departure.estimatedDelayMinutes !== null && departure.estimatedDelayMinutes !== undefined">
               · {{ Math.abs(departure.estimatedDelayMinutes) <= 1
                 ? 'graafikus'
@@ -78,6 +79,7 @@ function formatClock(date) {
 .route-number { display: grid; min-width: 40px; height: 38px; place-items: center; padding: 0 5px; border-radius: 7px; color: #07251d; background: #00c99a; font-family: inherit; font-size: 17px; font-weight: 700; }
 .route-number.tram { color: #2a1008; background: #ff642e; }
 .route-number.trolley { color: #fff; background: #174d9b; }
+.route-number.county { color: #3b2109; background: #ffbf80; }
 .route-type { color: #a1a9a2; font-size: 11px; }
 .destination-cell { min-width: 0; }
 .destination-name { display: block; overflow: hidden; color: #edf0ed; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }

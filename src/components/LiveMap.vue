@@ -25,6 +25,7 @@ const typeColors = {
   bus: { background: '#00c99a', foreground: '#08251e' },
   tram: { background: '#ff642e', foreground: '#2a1008' },
   trolley: { background: '#174d9b', foreground: '#ffffff' },
+  county: { background: '#ffbf80', foreground: '#3b2109' },
 }
 
 function escapeHtml(value) {
