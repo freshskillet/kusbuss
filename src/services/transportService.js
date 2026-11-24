@@ -84,24 +84,30 @@ function bearingBetween(from, to) {
 }
 
 function createSimulatedVehicles(stops) {
-  return stops.flatMap((stop, stopIndex) =>
-    stop.routes.map((route, routeIndex) => {
-      const bearing = (stopIndex * 63 + routeIndex * 79) % 360
-      const distance = 450 + ((stopIndex * 197 + routeIndex * 263) % 1050)
-      const position = destinationPoint(stop.coordinates, (bearing + 180) % 360, distance)
+  const routeAnchors = new Map()
+  stops.forEach((stop) => {
+    stop.routes.forEach((route) => {
+      const key = `${route.transportType}-${route.line}`
+      if (!routeAnchors.has(key)) routeAnchors.set(key, { stop, route })
+    })
+  })
 
-      return {
-        transportType: route.transportType,
-        line: route.line,
-        lon: position.lon,
-        lat: position.lat,
-        speed: FALLBACK_SPEEDS[(stopIndex + routeIndex) % FALLBACK_SPEEDS.length],
-        heading: bearingBetween(position, stop.coordinates),
-        vehicleId: `demo-${stop.id}-${route.line}-${routeIndex}`,
-        isSimulated: true,
-      }
-    }),
-  )
+  return [...routeAnchors.values()].map(({ stop, route }, index) => {
+    const bearing = (index * 63) % 360
+    const distance = 450 + ((index * 197) % 1050)
+    const position = destinationPoint(stop.coordinates, (bearing + 180) % 360, distance)
+
+    return {
+      transportType: route.transportType,
+      line: route.line,
+      lon: position.lon,
+      lat: position.lat,
+      speed: FALLBACK_SPEEDS[index % FALLBACK_SPEEDS.length],
+      heading: bearingBetween(position, stop.coordinates),
+      vehicleId: `demo-${stop.id}-${route.line}-${index}`,
+      isSimulated: true,
+    }
+  })
 }
 
 export async function getVehicles(stops) {

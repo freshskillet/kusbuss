@@ -12,9 +12,23 @@ const favoriteIds = ref([])
 const locationMessage = ref('')
 const isLocating = ref(false)
 
+const searchableStops = computed(() => props.stops
+  .map((stop) => ({
+    stop,
+    text: `${stop.name} ${stop.alias || ''} ${stop.area || ''} ${stop.platform || ''}`
+      .toLocaleLowerCase('et'),
+  }))
+  .sort((a, b) => b.stop.routes.length - a.stop.routes.length || a.stop.name.localeCompare(b.stop.name, 'et')))
+
 const filteredStops = computed(() => {
   const query = searchQuery.value.trim().toLocaleLowerCase('et')
-  return props.stops.filter((stop) => stop.name.toLocaleLowerCase('et').includes(query))
+  const limit = query ? 100 : 16
+  const matches = []
+  for (const entry of searchableStops.value) {
+    if (entry.text.includes(query)) matches.push(entry.stop)
+    if (matches.length === limit) break
+  }
+  return matches
 })
 
 onMounted(() => {
@@ -102,8 +116,8 @@ function findNearestStop() {
     <p v-if="locationMessage" class="location-message" role="status">{{ locationMessage }}</p>
 
     <div class="stop-list-heading">
-      <span>POPULAARSED PEATUSED</span>
-      <span>{{ filteredStops.length }}</span>
+      <span>{{ searchQuery ? 'OTSINGUTULEMUSED' : 'SAGEDASED PEATUSED' }}</span>
+      <span>{{ filteredStops.length }} / {{ stops.length }}</span>
     </div>
     <div v-if="filteredStops.length" class="stop-list">
       <div
@@ -123,7 +137,17 @@ function findNearestStop() {
               <path d="M5 19V9a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v10M5 14h14M9 10h6M9 17h.01M15 17h.01" />
             </svg>
           </span>
-          <span class="stop-name">{{ stop.name }}<small>{{ stop.routes.length }} liini</small></span>
+          <span class="stop-name">
+            {{ stop.name }}
+            <small>
+              <span v-if="stop.platform">Platvorm {{ stop.platform }} · </span>
+              {{ stop.routes.slice(0, 3).map((route) => `${route.line} → ${route.destination}`).join(' · ') }}
+              <span v-if="stop.routes.length > 3"> · +{{ stop.routes.length - 3 }}</span>
+              <span v-if="stop.area"> · {{ stop.area }}</span>
+              <span v-if="stop.wheelchairBoarding === '1'"> · ligipääsetav</span>
+              <span v-else-if="stop.wheelchairBoarding === '2'"> · ligipääsmatu</span>
+            </small>
+          </span>
           <span v-if="selectedStopId === stop.id" class="selected-indicator" aria-hidden="true"></span>
           <span v-else class="stop-spacer"></span>
         </button>

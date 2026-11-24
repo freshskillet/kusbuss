@@ -16,15 +16,31 @@ let stopLayer
 let routeLayer
 let userMarker
 let vehicleLayer
+let resizeObserver
+let resizeFrame
 const vehicleMarkers = new Map()
 const vehiclePositions = new Map()
 const vehicleAnimations = new Map()
-const typeColors = { bus: '#a8e679', tram: '#ff8879', trolley: '#7facff' }
+const typeColors = {
+  bus: { background: '#00c99a', foreground: '#08251e' },
+  tram: { background: '#ff642e', foreground: '#2a1008' },
+  trolley: { background: '#174d9b', foreground: '#ffffff' },
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character])
+}
 
 function createVehicleIcon(vehicle) {
-  const color = typeColors[vehicle.transportType] || '#d5ddd6'
-  const line = String(vehicle.line).replace(/[&<>"']/g, '')
-  const html = `<span class="vehicle-pin" style="--vehicle-color:${color};--vehicle-heading:${Number(vehicle.heading) || 0}deg"><span class="vehicle-arrow"></span><span class="vehicle-line">${line}</span></span>`
+  const colors = typeColors[vehicle.transportType] || { background: '#d5ddd6', foreground: '#101311' }
+  const line = escapeHtml(vehicle.line)
+  const html = `<span class="vehicle-pin" style="--vehicle-color:${colors.background};--vehicle-foreground:${colors.foreground};--vehicle-heading:${Number(vehicle.heading) || 0}deg"><span class="vehicle-arrow"></span><span class="vehicle-line">${line}</span></span>`
   return L.divIcon({
     html,
     className: 'vehicle-marker',
@@ -35,7 +51,17 @@ function createVehicleIcon(vehicle) {
 
 function renderStops() {
   stopLayer.clearLayers()
-  props.stops.forEach((stop) => {
+  const routeStops = props.trip?.legs?.flatMap((leg) => leg.pathStops) || []
+  const uniqueStops = [...new Map(routeStops.map((stop) => [stop.id, stop])).values()]
+  uniqueStops.forEach((stop) => {
+    const accessibility = stop.wheelchairBoarding === '1'
+      ? 'Ligipääsetav ratastooliga'
+      : stop.wheelchairBoarding === '2'
+        ? 'Ratastooliga ligipääsmatu'
+        : 'Ligipääsetavuse info puudub'
+    const name = escapeHtml(stop.name)
+    const platform = stop.platform ? ` · platvorm ${escapeHtml(stop.platform)}` : ''
+    const area = stop.area ? `<br>${escapeHtml(stop.area)}` : ''
     L.circleMarker([stop.coordinates.lat, stop.coordinates.lon], {
       radius: 5,
       color: '#101311',
@@ -43,31 +69,62 @@ function renderStops() {
       fillColor: '#f5f7f5',
       fillOpacity: 1,
     })
-      .bindTooltip(stop.name, { direction: 'top', offset: [0, -5] })
+      .bindTooltip(`${name}${platform}${area}<br>${accessibility}`, {
+        direction: 'top',
+        offset: [0, -5],
+        className: 'stop-tooltip',
+      })
       .addTo(stopLayer)
   })
 }
 
 function renderRoute() {
   routeLayer.clearLayers()
-  if (!props.trip?.pathStops?.length) return
+  if (!props.trip) return
 
-  const points = props.trip.pathStops.map((stop) => [stop.coordinates.lat, stop.coordinates.lon])
-  L.polyline(points, { color: '#b7f36b', weight: 5, opacity: 0.9, lineCap: 'round' }).addTo(routeLayer)
+  props.trip.legs.forEach((leg) => {
+    if (leg.shapePoints.length > 1) {
+      L.polyline(
+        leg.shapePoints.map((point) => [point.lat, point.lon]),
+        {
+          color: typeColors[leg.transportType]?.background || '#b7f36b',
+          weight: 5,
+          opacity: 0.92,
+          lineCap: 'round',
+          lineJoin: 'round',
+        },
+      ).addTo(routeLayer)
+    }
+  })
 
-  const first = props.trip.pathStops[0]
-  const last = props.trip.pathStops.at(-1)
+  const first = props.trip.legs[0]?.pathStops[0] || props.trip.destinationWalk?.from
+  const last = props.trip.legs.at(-1)?.pathStops.at(-1) || props.trip.destinationWalk?.from
+  if (!first || !last) return
   L.circleMarker([first.coordinates.lat, first.coordinates.lon], {
     radius: 8, color: '#101311', weight: 3, fillColor: '#b7f36b', fillOpacity: 1,
-  }).bindTooltip('Peale').addTo(routeLayer)
-  L.circleMarker([last.coordinates.lat, last.coordinates.lon], {
-    radius: 8, color: '#101311', weight: 3, fillColor: '#ff8879', fillOpacity: 1,
-  }).bindTooltip('Maha').addTo(routeLayer)
+  }).bindTooltip(props.trip.isWalkingOnly ? 'Algus' : 'Peale').addTo(routeLayer)
+  if (!props.trip.isWalkingOnly) {
+    L.circleMarker([last.coordinates.lat, last.coordinates.lon], {
+      radius: 8, color: '#101311', weight: 3, fillColor: '#ff8879', fillOpacity: 1,
+    }).bindTooltip('Maha').addTo(routeLayer)
+  }
+  if (props.trip.destinationWalk) {
+    const destination = props.trip.destinationWalk.to.coordinates
+    L.polyline([
+      [last.coordinates.lat, last.coordinates.lon],
+      [destination.lat, destination.lon],
+    ], { color: '#d5ddd6', weight: 3, dashArray: '6 7' })
+      .bindTooltip('Hinnanguline sirgjoon, mitte kõnniteekond')
+      .addTo(routeLayer)
+    L.circleMarker([destination.lat, destination.lon], {
+      radius: 8, color: '#101311', weight: 3, fillColor: '#ff8879', fillOpacity: 1,
+    }).bindTooltip('Sihtkoht').addTo(routeLayer)
+  }
 }
 
 function vehiclesToShow() {
   const leg = props.trip?.legs?.[0]
-  if (!leg) return props.vehicles
+  if (!leg) return props.trip ? [] : props.vehicles
 
   const candidates = props.vehicles.filter((vehicle) =>
     vehicle.line.toLowerCase() === leg.line.toLowerCase() &&
@@ -100,7 +157,7 @@ function updateVehicles() {
     const existing = vehicleMarkers.get(id)
     if (!existing) {
       const marker = L.marker(next, { icon: createVehicleIcon(vehicle), zIndexOffset: 500 })
-        .bindTooltip(`${vehicle.transportType === 'tram' ? 'Tramm' : vehicle.transportType === 'trolley' ? 'Troll' : 'Buss'} ${vehicle.line}`)
+        .bindTooltip(`${vehicle.transportType === 'tram' ? 'Tramm' : vehicle.transportType === 'trolley' ? 'Troll' : 'Buss'} ${escapeHtml(vehicle.line)}`)
         .addTo(vehicleLayer)
       vehicleMarkers.set(id, marker)
       vehiclePositions.set(id, next)
@@ -149,7 +206,15 @@ function updateUserLocation() {
 
 function focusMap() {
   if (!map) return
-  const points = props.trip?.pathStops?.map((stop) => [stop.coordinates.lat, stop.coordinates.lon]) || []
+  const points = props.trip?.legs?.flatMap((leg) =>
+    leg.shapePoints.map((point) => [point.lat, point.lon]),
+  ) || []
+  if (props.trip?.destinationWalk) {
+    const origin = props.trip.destinationWalk.from.coordinates
+    const destination = props.trip.destinationWalk.to.coordinates
+    points.push([origin.lat, origin.lon])
+    points.push([destination.lat, destination.lon])
+  }
   if (props.trip?.legs?.[0]?.vehicle) {
     const vehicle = props.trip.legs[0].vehicle
     points.push([vehicle.lat, vehicle.lon])
@@ -165,7 +230,7 @@ function focusMap() {
 }
 
 onMounted(() => {
-  map = L.map(mapElement.value, { zoomControl: true }).setView([59.437, 24.7536], 13)
+  map = L.map(mapElement.value, { zoomControl: true, preferCanvas: true }).setView([59.437, 24.7536], 13)
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors',
@@ -178,18 +243,28 @@ onMounted(() => {
   updateVehicles()
   updateUserLocation()
   focusMap()
-  window.setTimeout(() => map?.invalidateSize(), 100)
+  resizeObserver = new ResizeObserver(() => {
+    if (resizeFrame) cancelAnimationFrame(resizeFrame)
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = null
+      map?.invalidateSize({ pan: false })
+    })
+  })
+  resizeObserver.observe(mapElement.value)
 })
 
 watch(() => props.vehicles, updateVehicles)
-watch(() => props.trip, () => {
+watch(() => props.trip ? `${props.trip.id}-${props.trip.departsAt?.getTime()}` : '', () => {
+  renderStops()
   renderRoute()
   updateVehicles()
   focusMap()
-}, { deep: true })
+})
 watch(() => props.userLocation, updateUserLocation, { deep: true })
 
 onUnmounted(() => {
+  resizeObserver?.disconnect()
+  if (resizeFrame) cancelAnimationFrame(resizeFrame)
   vehicleAnimations.forEach((frame) => cancelAnimationFrame(frame))
   map?.remove()
   map = null
@@ -203,10 +278,11 @@ onUnmounted(() => {
 <style>
 .live-map { width: 100%; height: 390px; border: 1px solid #303832; border-radius: 12px; background: #d7ddd4; }
 .vehicle-marker { border: 0; background: transparent; }
-.vehicle-pin { position: relative; display: grid; width: 38px; height: 38px; place-items: center; border: 2px solid #101311; border-radius: 11px; color: #101311; background: var(--vehicle-color); box-shadow: 0 2px 8px #0008; }
+.vehicle-pin { position: relative; display: grid; width: 38px; height: 38px; place-items: center; border: 2px solid #101311; border-radius: 11px; color: var(--vehicle-foreground); background: var(--vehicle-color); box-shadow: 0 2px 8px #0008; }
 .vehicle-line { position: relative; z-index: 1; font: 700 14px/1 'Segoe UI', Arial, sans-serif; }
 .vehicle-arrow { position: absolute; top: -5px; left: 13px; width: 0; height: 0; border-right: 5px solid transparent; border-bottom: 10px solid #101311; border-left: 5px solid transparent; transform: rotate(var(--vehicle-heading)); transform-origin: 5px 24px; }
 .leaflet-tooltip { font-family: 'Segoe UI', Arial, sans-serif; }
+.stop-tooltip { line-height: 1.5; }
 @media (max-width: 600px) {
   .live-map { height: 320px; }
 }

@@ -10,6 +10,10 @@ const typeNames = {
   tram: 'Tramm',
   trolley: 'Troll',
 }
+
+function formatClock(date) {
+  return new Intl.DateTimeFormat('et-EE', { hour: '2-digit', minute: '2-digit' }).format(date)
+}
 </script>
 
 <template>
@@ -17,7 +21,7 @@ const typeNames = {
     <div class="board-table-head">
       <span>LIIN</span>
       <span>SIHTKOHT</span>
-      <span>SAABUMINE</span>
+      <span>VÄLJUMINE</span>
     </div>
     <div v-if="isLoading && !departures.length" class="board-message">
       Otsin reaalaja väljumisi…
@@ -34,17 +38,25 @@ const typeNames = {
         <div class="destination-cell">
           <span class="destination-name">{{ departure.destination }}</span>
           <span class="destination-meta">
-            {{ departure.isLive ? (departure.isSimulated ? 'LIVE · SIM' : 'LIVE GPS') : 'PLAANILINE' }}
+            {{ departure.isLive ? (departure.isSimulated ? 'DEMO GPS · HINNANG' : 'LIVE GPS · HINNANG') : 'TLT SÕIDUPLAAN' }}
+            <span v-if="departure.estimatedDelayMinutes !== null && departure.estimatedDelayMinutes !== undefined">
+              · {{ Math.abs(departure.estimatedDelayMinutes) <= 1
+                ? 'graafikus'
+                : `${Math.abs(departure.estimatedDelayMinutes)} min ${departure.estimatedDelayMinutes > 0 ? 'hilineb' : 'varem'}` }}
+            </span>
           </span>
         </div>
         <div class="arrival-cell">
           <strong :class="{ immediate: departure.minutes === 0 }">
             {{ departure.minutes === 0 ? 'Kohe' : `${departure.minutes} min` }}
           </strong>
-          <span v-if="departure.isLive && departure.distance !== null" class="arrival-distance">
-            {{ departure.distance < 1000 ? `${Math.round(departure.distance)} m` : `${(departure.distance / 1000).toFixed(1)} km` }}
+          <span class="arrival-distance">
+            {{ formatClock(departure.scheduledAt) }}
+            <template v-if="departure.isLive && departure.distance !== null">
+              · {{ departure.distance < 1000 ? `${Math.round(departure.distance)} m` : `${(departure.distance / 1000).toFixed(1)} km` }}
+            </template>
+            <template v-else> · graafik</template>
           </span>
-          <span v-else class="arrival-distance">graafik</span>
         </div>
       </article>
     </div>
@@ -63,9 +75,9 @@ const typeNames = {
 .departure-row:last-child { border-bottom: 0; }
 .departure-row:hover { background: #1b201c; }
 .route-cell { display: flex; align-items: center; gap: 8px; }
-.route-number { display: grid; min-width: 40px; height: 38px; place-items: center; padding: 0 5px; border-radius: 7px; color: #b9ef8b; background: #293825; font-family: inherit; font-size: 17px; font-weight: 700; }
-.route-number.tram { color: #ff9a8d; background: #3a2825; }
-.route-number.trolley { color: #8db4ff; background: #242e42; }
+.route-number { display: grid; min-width: 40px; height: 38px; place-items: center; padding: 0 5px; border-radius: 7px; color: #07251d; background: #00c99a; font-family: inherit; font-size: 17px; font-weight: 700; }
+.route-number.tram { color: #2a1008; background: #ff642e; }
+.route-number.trolley { color: #fff; background: #174d9b; }
 .route-type { color: #a1a9a2; font-size: 11px; }
 .destination-cell { min-width: 0; }
 .destination-name { display: block; overflow: hidden; color: #edf0ed; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }

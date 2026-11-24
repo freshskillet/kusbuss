@@ -1,76 +1,38 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import DepartureBoard from './components/DepartureBoard.vue'
 import TripPlanner from './components/TripPlanner.vue'
 import StopSelector from './components/StopSelector.vue'
-import { stops, transitLines } from './data/stops'
+import { getDeparturesAtStop } from './services/routePlanner'
+import { loadTransitData } from './services/transitDataService'
 import { getVehicles } from './services/transportService'
-import { calculateArrivalMinutes, distanceBetween, isHeadingTowardStop } from './utils/etaCalculator'
 
 const REFRESH_INTERVAL = 10_000
-const selectedStop = ref(stops[0])
+const selectedStop = shallowRef(null)
+const stops = shallowRef([])
+const transitData = shallowRef(null)
+const transitError = ref('')
 const activeView = ref('planner')
-const vehicles = ref([])
+const vehicles = shallowRef([])
 const dataSource = ref('loading')
 const lastUpdated = ref(null)
 const isLoading = ref(true)
 
 const departures = computed(() => {
-  const stop = selectedStop.value
-  if (!stop) return []
-
-  return stop.routes.map((route, index) => {
-    const matches = vehicles.value
-      .filter((vehicle) => vehicle.line.toLowerCase() === route.line.toLowerCase())
-      .filter((vehicle) => vehicle.transportType === route.transportType)
-      .filter((vehicle) => isHeadingTowardStop(vehicle, stop.coordinates))
-      .map((vehicle) => ({
-        vehicle,
-        distance: distanceBetween(stop.coordinates, {
-          lat: vehicle.lat,
-          lon: vehicle.lon,
-        }),
-      }))
-      .filter(({ distance }) => distance <= 3000)
-      .sort((a, b) => a.distance - b.distance)
-
-    const nearest = matches[0]
-    if (nearest) {
-      return {
-        id: `${stop.id}-${route.line}-${nearest.vehicle.vehicleId}`,
-        line: route.line,
-        transportType: route.transportType,
-        destination: route.destination,
-        minutes: calculateArrivalMinutes(
-          stop.coordinates,
-          { lat: nearest.vehicle.lat, lon: nearest.vehicle.lon },
-          nearest.vehicle.speed,
-        ),
-        isLive: true,
-        isSimulated: nearest.vehicle.isSimulated,
-        distance: nearest.distance,
-        vehicleId: nearest.vehicle.vehicleId,
-      }
-    }
-
-    return {
-      id: `${stop.id}-${route.line}-schedule`,
-      line: route.line,
-      transportType: route.transportType,
-      destination: route.destination,
-      minutes: route.scheduleMinutes,
-      isLive: false,
-      isSimulated: false,
-      distance: null,
-      vehicleId: null,
-      scheduleOrder: index,
-    }
-  }).sort((a, b) => a.minutes - b.minutes)
+  if (activeView.value !== 'board' || !transitData.value || !selectedStop.value) return []
+  return getDeparturesAtStop(
+    transitData.value,
+    selectedStop.value,
+    new Date(),
+    vehicles.value,
+    12,
+  )
 })
 
 async function refreshVehicles() {
+  if (!stops.value.length) return
   try {
-    const result = await getVehicles(stops)
+    const result = await getVehicles(stops.value)
     vehicles.value = result.vehicles
     dataSource.value = result.source
     lastUpdated.value = new Date()
@@ -97,10 +59,26 @@ const formattedUpdatedAt = computed(() => {
 
 let refreshTimer
 onMounted(() => {
-  refreshVehicles()
-  refreshTimer = window.setInterval(refreshVehicles, REFRESH_INTERVAL)
+  loadTransitData()
+    .then((data) => {
+      transitData.value = data
+      stops.value = data.stops
+      selectedStop.value = data.stops.find((stop) => stop.name.toLocaleLowerCase('et').startsWith('vabaduse')) ||
+        data.stops[0]
+      return refreshVehicles()
+    })
+    .then(() => {
+      refreshTimer = window.setInterval(refreshVehicles, REFRESH_INTERVAL)
+    })
+    .catch((error) => {
+      console.error('Tallinna ametlike sõiduplaaniandmete laadimine ebaõnnestus:', error)
+      transitError.value = 'Ametlikku sõiduplaani ei õnnestunud laadida. Proovi leht uuesti avada.'
+      isLoading.value = false
+    })
 })
-onUnmounted(() => window.clearInterval(refreshTimer))
+onUnmounted(() => {
+  if (refreshTimer) window.clearInterval(refreshTimer)
+})
 </script>
 
 <template>
@@ -133,57 +111,62 @@ onUnmounted(() => window.clearInterval(refreshTimer))
       >Peatuse tabloo</button>
     </nav>
 
-    <section class="intro">
-      <div class="eyebrow"><span class="eyebrow-line"></span>TALLINNA ÜHISTRANSPORT</div>
-      <h1>Sinu järgmine<br /><span>sõit algab siit.</span></h1>
-      <p class="intro-copy">Reaalajas saabumised. Et jõuaksid õigel ajal õigesse kohta.</p>
-    </section>
+    <p v-if="transitError" class="transit-state error-state" role="alert">{{ transitError }}</p>
+    <p v-else-if="!transitData" class="transit-state">Laen ametlikke peatuste ja sõiduplaanide andmeid…</p>
 
-    <div v-if="activeView === 'board'" class="content-grid">
-      <aside class="sidebar">
-        <StopSelector :stops="stops" :selected-stop-id="selectedStop.id" @select-stop="selectStop" />
-        <div class="sidebar-tip">
-          <span class="tip-icon" aria-hidden="true">✦</span>
-          <p>Lisa peatus lemmikuks, et leida see järgmisel korral kiiremini.</p>
-        </div>
-      </aside>
-
-      <section class="board-column" aria-live="polite">
-        <div class="board-heading">
-          <div>
-            <div class="eyebrow board-eyebrow"><span class="eyebrow-line"></span>PEATUS</div>
-            <h2>{{ selectedStop.name }}</h2>
-            <p class="stop-direction">{{ selectedStop.direction }}</p>
+    <template v-else-if="transitData">
+      <div v-show="activeView === 'board' && selectedStop" class="content-grid">
+        <aside class="sidebar">
+          <StopSelector :stops="stops" :selected-stop-id="selectedStop.id" @select-stop="selectStop" />
+          <div class="sidebar-tip">
+            <span class="tip-icon" aria-hidden="true">✦</span>
+            <p>Lisa peatus lemmikuks, et leida see järgmisel korral kiiremini.</p>
           </div>
-          <div class="update-status" :class="{ 'is-simulated': dataSource === 'simulated' }">
-            <span>{{ dataSource === 'simulated' ? 'DEMOANDMED' : 'ANDMED' }}</span>
-            <small>{{ formattedUpdatedAt }}</small>
+        </aside>
+
+        <section class="board-column" aria-live="polite">
+          <div class="board-heading">
+            <div>
+              <div class="eyebrow board-eyebrow"><span class="eyebrow-line"></span>PEATUS</div>
+              <h2>{{ selectedStop.name }}</h2>
+              <p class="stop-direction">
+                {{ selectedStop.area || selectedStop.authority }}
+                <span v-if="selectedStop.platform"> · platvorm {{ selectedStop.platform }}</span>
+                <span v-if="selectedStop.routes.length"> · {{ selectedStop.routes.slice(0, 2).map((route) => `${route.line} → ${route.destination}`).join(' · ') }}</span>
+                <span v-if="selectedStop.wheelchairBoarding === '1'"> · ratastooliga ligipääsetav</span>
+                <span v-else-if="selectedStop.wheelchairBoarding === '2'"> · ratastooliga ligipääsmatu</span>
+              </p>
+            </div>
+            <div class="update-status" :class="{ 'is-simulated': dataSource === 'simulated' }">
+              <span>{{ dataSource === 'simulated' ? 'DEMO GPS' : 'LIVE GPS' }}</span>
+              <small>{{ formattedUpdatedAt }}</small>
+            </div>
           </div>
-        </div>
 
-        <DepartureBoard
-          :departures="departures"
-          :is-loading="isLoading"
-          :stop-name="selectedStop.name"
-        />
+          <DepartureBoard
+            :departures="departures"
+            :is-loading="isLoading"
+            :stop-name="selectedStop.name"
+          />
 
-        <div class="board-footer">
-          <div class="transport-legend">
-            <span><i class="legend-dot bus"></i>Buss</span>
-            <span><i class="legend-dot tram"></i>Tramm</span>
-            <span><i class="legend-dot trolley"></i>Troll</span>
+          <div class="board-footer">
+            <div class="transport-legend">
+              <span><i class="legend-dot bus"></i>Buss</span>
+              <span><i class="legend-dot tram"></i>Tramm</span>
+              <span><i class="legend-dot trolley"></i>Troll</span>
+            </div>
+            <p>Uueneb automaatselt iga 10 sekundi järel</p>
           </div>
-          <p>Uueneb automaatselt iga 10 sekundi järel</p>
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
 
-    <TripPlanner
-      v-else
-      :stops="stops"
-      :lines="transitLines"
-      :vehicles="vehicles"
-    />
+      <TripPlanner
+        v-show="activeView === 'planner'"
+        :data="transitData"
+        :stops="stops"
+        :vehicles="vehicles"
+      />
+    </template>
 
     <footer class="page-footer">
       <span>Liigu linnas omas rütmis.</span>
@@ -241,15 +224,13 @@ a { color: inherit; text-decoration: none; }
 .view-tabs button { padding: 9px 14px; border: 0; border-radius: 7px; color: #a2aaa3; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; }
 .view-tabs button:hover { color: #f5f7f5; }
 .view-tabs button.active { color: #d7efc5; background: #293325; }
+.transit-state { margin: 28px 0; padding: 18px; border: 1px solid #343b35; border-radius: 10px; color: #d3dbd4; background: #171b18; }
+.error-state { border-color: #9c3d3d; color: #ffc2bd; }
 
-.intro { padding: 67px 0 44px; }
 .eyebrow { display: flex; align-items: center; gap: 10px; color: var(--green); font-size: 11px; font-weight: 700; letter-spacing: 1.2px; }
 .eyebrow-line { display: inline-block; width: 18px; height: 1px; background: var(--green); }
-.intro h1 { margin: 20px 0 12px; font-family: inherit; font-size: clamp(42px, 6vw, 64px); font-weight: 700; letter-spacing: -1.8px; line-height: 1.08; }
-.intro h1 span { color: #78817a; }
-.intro-copy { margin: 0; color: #a1a9a2; font-size: 16px; }
 
-.content-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); align-items: start; gap: 48px; }
+.content-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); align-items: start; gap: 48px; margin-top: 38px; }
 .sidebar { display: flex; flex-direction: column; gap: 18px; }
 .sidebar-tip { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid #292f2b; border-radius: 14px; background: #151916; }
 .tip-icon { color: var(--green); font-size: 15px; }
@@ -267,9 +248,9 @@ a { color: inherit; text-decoration: none; }
 .transport-legend { display: flex; flex-wrap: wrap; gap: 13px; }
 .transport-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend-dot { width: 6px; height: 6px; border-radius: 50%; }
-.legend-dot.bus { background: #a8e679; }
-.legend-dot.tram { background: #ff8879; }
-.legend-dot.trolley { background: #7facff; }
+.legend-dot.bus { background: #00c99a; }
+.legend-dot.tram { background: #ff642e; }
+.legend-dot.trolley { background: #174d9b; }
 .page-footer { display: flex; justify-content: space-between; margin-top: auto; padding: 32px 0 24px; color: #929a94; font-size: 12px; }
 .footer-divider { padding: 0 5px; color: #424a44; }
 
@@ -278,8 +259,6 @@ a { color: inherit; text-decoration: none; }
   .topbar { height: 68px; }
   .view-tabs { margin-top: 14px; }
   .view-tabs button { padding: 8px 11px; font-size: 12px; }
-  .intro { padding: 38px 0 28px; }
-  .intro h1 { letter-spacing: -2.5px; }
   .content-grid { grid-template-columns: 1fr; gap: 30px; }
   .sidebar { gap: 12px; }
   .sidebar-tip { display: none; }
